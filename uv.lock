@@ -77,19 +77,6 @@ wheels = [
 ]
 
 [[package]]
-name = "beautifulsoup4"
-version = "4.15.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "soupsieve" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/43/65/318323f98dbee45d42dff61d8f047181bc6f2268a9068cfad035a46be5af/beautifulsoup4-4.15.0.tar.gz", hash = "sha256:288e3ca7d54b06f2ac191970bc275c1939cb46d450b255bf6718b04aa37ab4f7", size = 632571, upload-time = "2026-06-07T16:44:20.453Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/c6/92fcd42f1ba33e1184263f25bfabf3d27c383410470f169e4b8163bf9c17/beautifulsoup4-4.15.0-py3-none-any.whl", hash = "sha256:d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9", size = 109924, upload-time = "2026-06-07T16:44:21.566Z" },
-]
-
-[[package]]
 name = "brotli"
 version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -526,15 +513,6 @@ wheels = [
 ]
 
 [[package]]
-name = "patool"
-version = "4.0.5"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/e2/215c7d5efd40cf9b33b4943055b47c22cb0851383facdaedd919e30de90a/patool-4.0.5.tar.gz", hash = "sha256:1c8bbbbe1f421181bf7055ada975befb024c1677449e9d36f42bb45ac69f8b4c", size = 2011328, upload-time = "2026-05-18T08:56:14.929Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/50/cb792aaf25a8f42f5738dafb3030a1243d484ab366ff321ebcd45dfcfc12/patool-4.0.5-py2.py3-none-any.whl", hash = "sha256:9413a114c7aedf2263f151a56798055a593de671ef0a9ef94870284ad21818fb", size = 101399, upload-time = "2026-05-18T08:56:16.465Z" },
-]
-
-[[package]]
 name = "psutil"
 version = "7.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -749,15 +727,6 @@ wheels = [
 ]
 
 [[package]]
-name = "soupsieve"
-version = "2.9.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/69/99/a6ca3beb3ccacb41fb3321d8a60e5566f9e6467601ef8eba6a17e1b89778/soupsieve-2.9.2.tar.gz", hash = "sha256:4a55d8cf158a9c2e587fa4922f1bbb91d68ac829e2d6f25403a85747c71daf74", size = 122445, upload-time = "2026-08-07T00:57:24.801Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/dc/ad025c1ee131eba60c69f4dd5779b18fcf1e6b21a343e2162a84d5d133c7/soupsieve-2.9.2-py3-none-any.whl", hash = "sha256:8089a26fd974ca7a1f30276d3d8492ab266ab15af581642dfe8aa162e0c1c823", size = 37370, upload-time = "2026-08-07T00:57:23.524Z" },
-]
-
-[[package]]
 name = "star-tt-bot"
 version = "0.1.0"
 source = { virtual = "." }
@@ -765,7 +734,6 @@ dependencies = [
     { name = "curl-cffi" },
     { name = "py7zr" },
     { name = "requests" },
-    { name = "teamtalk-py" },
     { name = "websockets" },
 ]
 
@@ -774,23 +742,7 @@ requires-dist = [
     { name = "curl-cffi", specifier = ">=0.16.3" },
     { name = "py7zr", specifier = ">=1.1.3" },
     { name = "requests", specifier = ">=2.34.2" },
-    { name = "teamtalk-py", specifier = ">=1.4.0" },
     { name = "websockets", specifier = ">=12.0" },
-]
-
-[[package]]
-name = "teamtalk-py"
-version = "1.4.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "patool" },
-    { name = "requests" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/87/bb/ece863610418267a8776da4b31abe17930adb90c6a3f313f4b376a11867e/teamtalk_py-1.4.0.tar.gz", hash = "sha256:7f61d2ddd24b578320b21b5b924a8339b2684c2d4257324ebd22740407b7bdc9", size = 33178, upload-time = "2025-04-28T17:50:13.263Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/92/d544f369c19bb2918f12b9b3230124fc89ad36d6fa2b34813bba3103a69b/teamtalk_py-1.4.0-py3-none-any.whl", hash = "sha256:9a39de59b281aedb24a5aa957a0da2e0f1cff26350fe65f73941c11085d0edb8", size = 39345, upload-time = "2025-04-28T17:50:11.459Z" },
 ]
 
 [[package]]
@@ -800,15 +752,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1c/dc/0aff23d6036a4d3bf4f1d8c8204c5c79c4437e25e0ae94ffe4bbb55ee3c2/texttable-1.7.0.tar.gz", hash = "sha256:2d2068fb55115807d3ac77a4ca68fa48803e84ebb0ee2340f858107a36522638", size = 12831, upload-time = "2023-10-03T09:48:12.272Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/99/4772b8e00a136f3e01236de33b0efda31ee7077203ba5967fcc76da94d65/texttable-1.7.0-py2.py3-none-any.whl", hash = "sha256:72227d592c82b3d7f672731ae73e4d1f88cd8e2ef5b075a7a7f01a23a3743917", size = 10768, upload-time = "2023-10-03T09:48:10.434Z" },
-]
-
-[[package]]
-name = "typing-extensions"
-version = "4.16.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f6/cc/6253133b5bb138fc3306cebfbda2c520f545d36b5be2c7255cc528bb45d6/typing_extensions-4.16.0.tar.gz", hash = "sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5", size = 113555, upload-time = "2026-07-02T08:40:05.92Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl", hash = "sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8", size = 45571, upload-time = "2026-07-02T08:40:04.659Z" },
 ]
 
 [[package]]

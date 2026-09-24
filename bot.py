@@ -25,7 +25,6 @@ import os
 import logging
 import subprocess
 import tempfile
-import sys
 import time
 import threading
 
@@ -37,54 +36,26 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # installs (client app on Windows, brew/distro paths elsewhere). On Windows
 # the DLL is loaded explicitly by absolute path so the OS can't silently
 # resolve the name to a mismatched copy from PATH.
-from tt_sdk import load as _tt_sdk_load
+# --- TeamTalk SDK: native library + vendored Python wrapper --------------
+# tt_sdk resolves the native lib in order: the SDK pair vendored in
+# _tt_vendor/TeamTalk_DLL (installed by tools/fetch_sdk.py), $TT_SDK_DIR,
+# then well-known system installs (client app on Windows, brew/distro paths
+# elsewhere). On Windows the DLL is loaded explicitly by absolute path so the
+# OS can't silently resolve a mismatched copy from PATH. The Python wrapper
+# is imported directly from _tt_vendor/TeamTalkPy -- deliberately NOT via the
+# `teamtalk` PyPI package, whose __init__ on Linux cdll.LoadLibrary()s a .so
+# inside its own site-packages tree and, when missing, runs its own SDK
+# downloader (bearware.dk 454-walls non-browser clients), killing the import
+# on servers.
+from tt_sdk import load_wrapper as _tt_load_wrapper
 try:
-    _tt_lib, _tt_src = _tt_sdk_load()
+    sdk = _tt_load_wrapper()
 except SystemExit as _e:
     raise SystemExit(
         str(_e)
         + "\n  (Or install the TeamTalk client app; but the matching SDK is\n"
           "   preferred and required for media streaming.)"
     )
-
-# --- Vendored TeamTalk SDK wrapper -------------------------------------
-# The upstream `teamtalk` PyPI package tries to auto-download a paywalled SDK
-# from bearware.dk on import (when its bundled wrapper is missing). We ship the
-# wrapper we already have in `_tt_vendor/TeamTalkPy` and register it in
-# sys.modules BEFORE importing `teamtalk`, so the import succeeds offline and
-# never triggers the download. (The native TeamTalk5.dll is loaded explicitly
-# above -- see _VENDOR_DLL -- or falls back to the client install.)
-_VENDOR_TT = os.path.join(_HERE, "_tt_vendor", "TeamTalkPy")
-
-# Only pre-register if the upstream wrapper is NOT already present in the
-# installed teamtalk package (i.e. a fresh `uv sync` without the SDK download).
-try:
-    import importlib.util as _ilu
-    _tt_spec = _ilu.find_spec("teamtalk")
-    _has_upstream = False
-    if _tt_spec and _tt_spec.submodule_search_locations:
-        _upstream_impl = os.path.join(
-            _tt_spec.submodule_search_locations[0],
-            "implementation", "TeamTalkPy", "__init__.py",
-        )
-        _has_upstream = os.path.isfile(_upstream_impl)
-except Exception:
-    _has_upstream = False
-
-if not _has_upstream and os.path.isfile(os.path.join(_VENDOR_TT, "__init__.py")):
-    _spec = _ilu.spec_from_file_location(
-        "teamtalk.implementation.TeamTalkPy",
-        os.path.join(_VENDOR_TT, "__init__.py"),
-    )
-    _mod = _ilu.module_from_spec(_spec)
-    sys.modules["teamtalk.implementation.TeamTalkPy"] = _mod
-    _spec.loader.exec_module(_mod)
-    log_init = logging.getLogger("star_tt_bot")
-    log_init.info("Using vendored TeamTalk SDK wrapper (offline).")
-
-import teamtalk
-from teamtalk.enums import UserStatusMode
-from teamtalk.implementation.TeamTalkPy import TeamTalk5 as sdk
 import star_client as _sc
 StarCoagulator = _sc.StarCoagulator
 
@@ -97,6 +68,10 @@ MSGTYPE_CHANNEL = int(sdk.TextMsgType.MSGTYPE_CHANNEL)
 
 # "No video track" codec value for audio-only streaming
 NOVIDEOFORMAT = 0
+
+# Status mode for doChangeStatus (TeamTalk.h STATUSMODE_AVAILABLE; same value
+# as the old PyPI package's UserStatusMode.ONLINE we replaced).
+STATUSMODE_ONLINE = 0x0
 
 # Client event constants
 CLIENTEVENT_CMD_MYSELF_LOGGEDIN = int(sdk.ClientEvent.CLIENTEVENT_CMD_MYSELF_LOGGEDIN)
@@ -302,7 +277,7 @@ class StarTeamTalkBot:
                     _note(999, "getMyUserID != 0 -> confirmed")
                     if self.status:
                         try:
-                            self.tt.doChangeStatus(UserStatusMode.ONLINE, self.status)
+                            self.tt.doChangeStatus(STATUSMODE_ONLINE, self.status)
                             log.info("Set bot status message.")
                         except Exception as e:
                             log.warning("Could not set status message: %s", e)
@@ -327,7 +302,7 @@ class StarTeamTalkBot:
                     log.info("Received MYSELF_LOGGEDIN event.")
                     if self.status:
                         try:
-                            self.tt.doChangeStatus(UserStatusMode.ONLINE, self.status)
+                            self.tt.doChangeStatus(STATUSMODE_ONLINE, self.status)
                             log.info("Set bot status message.")
                         except Exception as e:
                             log.warning("Could not set status message: %s", e)

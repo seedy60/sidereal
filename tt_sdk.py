@@ -44,6 +44,8 @@ _POSIX_FALLBACK_DIRS = (
 )
 
 _resolved = None  # (lib_path, lib_dir) or None
+_VENDOR_ROOT = os.path.join(_HERE, "_tt_vendor")
+_WRAPPER_DIR = os.path.join(_VENDOR_ROOT, "TeamTalkPy")
 
 
 def _first_file(dirs, names):
@@ -157,6 +159,32 @@ def load(verbose=False):
     if verbose:
         print("Loaded %s from %s (%s)" % (os.path.basename(lib_path), lib_path, source))
     return lib_path, source
+
+
+def load_wrapper():
+    """Load the vendored ctypes wrapper (TeamTalk5.py) and return its module.
+
+    Deliberately does NOT route through the ``teamtalk`` PyPI package: on
+    Linux that package's ``__init__`` unconditionally ``cdll.LoadLibrary``s a
+    ``libTeamTalk5.so`` inside its own site-packages tree and, when it is
+    missing, runs its own SDK downloader at import time (plain ``requests``,
+    which bearware.dk 454-walls) -- killing imports on servers. The vendored
+    wrapper is SDK-matched to the vendored library and works offline.
+
+    Returns the ``TeamTalk5`` module. Raises SystemExit when the native
+    library or wrapper directory is missing.
+    """
+    load()  # native library must be preloaded first; raises on failure
+    if not os.path.isdir(_WRAPPER_DIR):
+        raise SystemExit(
+            "TeamTalk Python wrapper not found at %s.\n"
+            "  Fix: run  uv run python tools/fetch_sdk.py  to install the\n"
+            "  SDK pair into _tt_vendor/." % _WRAPPER_DIR
+        )
+    if _VENDOR_ROOT not in sys.path:
+        sys.path.insert(0, _VENDOR_ROOT)
+    from TeamTalkPy import TeamTalk5  # noqa: E402
+    return TeamTalk5
 
 
 def platform_tag():

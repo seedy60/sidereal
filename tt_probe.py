@@ -27,16 +27,11 @@ _tt_lib, _tt_src = _tt_sdk_load()
 print("Resolved native lib:", _tt_lib, "(%s)" % _tt_src, flush=True)
 
 import config  # noqa: E402  (pulls in config.local.py overrides if present)
-import importlib.util as ilu
-
-_spec = ilu.spec_from_file_location(
-    "teamtalk.implementation.TeamTalkPy",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "_tt_vendor", "TeamTalkPy", "__init__.py"),
-)
-_mod = ilu.module_from_spec(_spec)
-sys.modules["teamtalk.implementation.TeamTalkPy"] = _mod
-_spec.loader.exec_module(_mod)
-from teamtalk.implementation.TeamTalkPy import TeamTalk5 as sdk  # noqa: E402
+# Direct vendored-wrapper import -- deliberately NOT via the `teamtalk`
+# PyPI package: on Linux its __init__ runs its own SDK downloader at import
+# time (bearware.dk 454-walls non-browser clients), killing the import.
+from tt_sdk import load_wrapper as _tt_load_wrapper
+sdk = _tt_load_wrapper()
 
 cfg = config.CONFIG
 
