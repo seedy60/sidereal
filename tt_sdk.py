@@ -47,6 +47,27 @@ _resolved = None  # (lib_path, lib_dir) or None
 _VENDOR_ROOT = os.path.join(_HERE, "_tt_vendor")
 _WRAPPER_DIR = os.path.join(_VENDOR_ROOT, "TeamTalkPy")
 
+# The vendored wrapper uses TTCHAR_P = c_wchar_p (str) on Windows but c_char_p
+# (bytes, UTF-8) everywhere else -- and its ttstr() only converts on the way
+# OUT of the SDK. Every string passed INTO the SDK must be encoded on POSIX,
+# or ctypes raises ``TypeError: 'str' object cannot be interpreted as
+# ctypes.c_char_p``. These two helpers are the crossing points; on Windows
+# both are pass-through.
+
+
+def enc(s):
+    """Encode a Python str for SDK calls that take TTCHAR_P arguments."""
+    if s is None or sys.platform == "win32" or isinstance(s, bytes):
+        return s
+    return s.encode("utf-8")
+
+
+def dec(s):
+    """Decode a TTCHAR_P value returned by the SDK into a Python str."""
+    if sys.platform == "win32" or isinstance(s, str) or s is None:
+        return s
+    return s.decode("utf-8", errors="replace")
+
 
 def _first_file(dirs, names):
     for d in dirs:

@@ -47,7 +47,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # inside its own site-packages tree and, when missing, runs its own SDK
 # downloader (bearware.dk 454-walls non-browser clients), killing the import
 # on servers.
-from tt_sdk import load_wrapper as _tt_load_wrapper
+from tt_sdk import load_wrapper as _tt_load_wrapper, enc as _tt_enc, dec as _tt_dec
 try:
     sdk = _tt_load_wrapper()
 except SystemExit as _e:
@@ -100,7 +100,8 @@ def _cmd_error_code_and_text(m):
     """
     try:
         em = m.clienterrormsg
-        return int(em.nErrorNo), sdk.ttstr(em.szErrorMsg) or ""
+        # ttstr decodes on POSIX; dec() is belt-and-braces for str/bytes.
+        return int(em.nErrorNo), (_tt_dec(sdk.ttstr(em.szErrorMsg)) or "")
     except Exception as e:
         return 0, "<unreadable error message: %s>" % e
 
@@ -139,7 +140,7 @@ class StarTeamTalkBot:
     def connect(self):
         log.info("Connecting to TeamTalk server %s:%d (udp %d, encrypted=%s)",
                  self.host, self.tcp_port, self.udp_port, self.encrypted)
-        ok = self.tt.connect(self.host, self.tcp_port, self.udp_port,
+        ok = self.tt.connect(_tt_enc(self.host), self.tcp_port, self.udp_port,
                              nLocalTcpPort=0, nLocalUdpPort=0, bEncrypted=self.encrypted)
         if not ok:
             err = self._safe_last_error()
@@ -200,7 +201,7 @@ class StarTeamTalkBot:
         try:
             code = self.tt.getLastError()
             if code:
-                return f"{code}: {getattr(self.tt, 'getErrorMessage', lambda c: '') (code)}"
+                return f"{code}: {_tt_dec(self.tt.getErrorMessage(code))}"
         except Exception:
             pass
         return ""
@@ -234,7 +235,7 @@ class StarTeamTalkBot:
 
         while time.time() < deadline:
             do_login_calls += 1
-            login_rc = self.tt.doLogin(self.nickname, self.username, self.password, self.client_name)
+            login_rc = self.tt.doLogin(_tt_enc(self.nickname), _tt_enc(self.username), _tt_enc(self.password), _tt_enc(self.client_name))
             if login_rc != 1:
                 # TT_DoLoginEx returns 1 on success, -1 on error. NEVER treat
                 # a nonzero return as success (-1 used to pass the old
@@ -277,7 +278,7 @@ class StarTeamTalkBot:
                     _note(999, "getMyUserID != 0 -> confirmed")
                     if self.status:
                         try:
-                            self.tt.doChangeStatus(STATUSMODE_ONLINE, self.status)
+                            self.tt.doChangeStatus(STATUSMODE_ONLINE, _tt_enc(self.status))
                             log.info("Set bot status message.")
                         except Exception as e:
                             log.warning("Could not set status message: %s", e)
@@ -302,7 +303,7 @@ class StarTeamTalkBot:
                     log.info("Received MYSELF_LOGGEDIN event.")
                     if self.status:
                         try:
-                            self.tt.doChangeStatus(STATUSMODE_ONLINE, self.status)
+                            self.tt.doChangeStatus(STATUSMODE_ONLINE, _tt_enc(self.status))
                             log.info("Set bot status message.")
                         except Exception as e:
                             log.warning("Could not set status message: %s", e)
@@ -435,14 +436,14 @@ class StarTeamTalkBot:
         burst can be missed or arrive out of order, so instead of trusting the
         harvested tree we ask the client for the live channel list.
         """
-        chan_id = self.tt.getChannelIDFromPath(self.channel_path)
+        chan_id = self.tt.getChannelIDFromPath(_tt_enc(self.channel_path))
         if chan_id <= 0:
             chan_id = self._find_channel_id_by_path()
         if chan_id <= 0:
             # Last resort: keep pumping events briefly in case the tree is
             # still arriving, then try the direct path lookup once more.
             self._drain_channel_tree(max_s=2.0, quiet_s=0.5)
-            chan_id = self.tt.getChannelIDFromPath(self.channel_path)
+            chan_id = self.tt.getChannelIDFromPath(_tt_enc(self.channel_path))
             if chan_id <= 0:
                 chan_id = self._find_channel_id_by_path()
         if chan_id <= 0:
@@ -456,7 +457,7 @@ class StarTeamTalkBot:
                             self.channel_path)
                 return
         log.info("Joining channel id=%d ('%s')", chan_id, self.channel_path)
-        self.tt.doJoinChannelByID(chan_id, self.channel_password)
+        self.tt.doJoinChannelByID(chan_id, _tt_enc(self.channel_password))
         end = time.time() + timeout
         while time.time() < end:
             if self.tt.getMyChannelID() == chan_id:
@@ -801,7 +802,7 @@ class StarTeamTalkBot:
             self._temp_files = [wav_path, out_path]
             vc = sdk.VideoCodec()
             vc.nCodec = NOVIDEOFORMAT
-            ok = self.tt.startStreamingMediaFileToChannel(out_path, vc)
+            ok = self.tt.startStreamingMediaFileToChannel(_tt_enc(out_path), vc)
             if not ok:
                 self.send_pm(self._last_from or 0,
                     "Failed to start streaming (missing USERRIGHT_TRANSMIT_MEDIAFILE_AUDIO?).")

@@ -22,7 +22,7 @@ faulthandler.dump_traceback_later(45, exit=True)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Same library resolution as bot.py: vendored SDK pair, $TT_SDK_DIR, system.
-from tt_sdk import load as _tt_sdk_load
+from tt_sdk import load as _tt_sdk_load, enc as _tt_enc
 _tt_lib, _tt_src = _tt_sdk_load()
 print("Resolved native lib:", _tt_lib, "(%s)" % _tt_src, flush=True)
 
@@ -63,7 +63,7 @@ if _h:
     _buf = ctypes.create_unicode_buffer(512)
     _k32.GetModuleFileNameW(_h, _buf, 512)
     out("TeamTalk5.dll actually loaded from:", _buf.value)
-ok = tt.connect(cfg["host"], int(cfg["tcp_port"]), int(cfg["udp_port"]),
+ok = tt.connect(_tt_enc(cfg["host"]), int(cfg["tcp_port"]), int(cfg["udp_port"]),
                 nLocalTcpPort=0, nLocalUdpPort=0, bEncrypted=bool(cfg.get("encrypted", False)))
 out("connect ->", ok, "(async: now waiting for handshake)")
 
@@ -74,7 +74,7 @@ while not (int(tt.getFlags()) & 0x00004000) and time.time() - _t0 < 10:
     time.sleep(0.05)
 out(f"handshake complete after {time.time()-_t0:.2f}s, flags=0x{int(tt.getFlags()):08x}")
 
-ok = tt.doLogin(cfg.get("nickname", "starbot"), cfg.get("username", ""), cfg.get("password", ""), "STAR-TT-Probe")
+ok = tt.doLogin(_tt_enc(cfg.get("nickname", "starbot")), _tt_enc(cfg.get("username", "")), _tt_enc(cfg.get("password", "")), _tt_enc("STAR-TT-Probe"))
 out("doLogin ->", ok)
 
 # ClientEvent -> name table for readable dumps
@@ -160,7 +160,7 @@ if root > 0:
         out("root path =", sdk.ttstr(tt.getChannelPath(root)))
     except Exception as e:
         out("getChannelPath failed:", e)
-out("getChannelIDFromPath('/hangout area/') ->", tt.getChannelIDFromPath("/hangout area/"))
-out("getChannelIDFromPath('hangout area') ->", tt.getChannelIDFromPath("hangout area"))
+out("getChannelIDFromPath('/hangout area/') ->", tt.getChannelIDFromPath(_tt_enc("/hangout area/")))
+out("getChannelIDFromPath('hangout area') ->", tt.getChannelIDFromPath(_tt_enc("hangout area")))
 out("getMyUserID ->", tt.getMyUserID(), " getMyChannelID ->", tt.getMyChannelID())
 out("\nDone. (Not disconnecting cleanly on purpose; process exits here.)")
