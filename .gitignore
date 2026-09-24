@@ -15,6 +15,11 @@ config.local.py
 *.log
 live_run.log
 
+# TeamTalk SDK native library + license (30 MB, fetched via tools/fetch_sdk.py)
+_tt_vendor/TeamTalk_DLL/
+_tt_vendor/TTSDK_license.txt
+ttsdk.7z
+
 # OS cruft
 .DS_Store
 Thumbs.db

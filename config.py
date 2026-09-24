@@ -70,9 +70,21 @@ CONFIG = {
 
 # Optional local overrides (gitignored). This keeps your real account out of
 # version control entirely.
-try:
-    import config_local  # type: ignore
-    if hasattr(config_local, "CONFIG"):
-        CONFIG.update(config_local.CONFIG)
-except Exception:
-    pass
+#
+# NOTE: the file is named config.local.py -- with a DOT -- so it can never be
+# imported as a module (`import config_local` looks for config_local.py and
+# always fails). Load it explicitly by path instead, and warn loudly if the
+# file exists but can't be executed (previously this failure was silent, which
+# meant the bot ran on placeholder credentials with no hint anything was off).
+import importlib.util as _ilu
+
+_LOCAL_CFG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.local.py")
+if os.path.isfile(_LOCAL_CFG):
+    _spec = _ilu.spec_from_file_location("config_local", _LOCAL_CFG)
+    _mod = _ilu.module_from_spec(_spec)
+    try:
+        _spec.loader.exec_module(_mod)
+        if hasattr(_mod, "CONFIG"):
+            CONFIG.update(_mod.CONFIG)
+    except Exception as _e:
+        print("WARNING: config.local.py exists but could not be loaded: %r" % (_e,))

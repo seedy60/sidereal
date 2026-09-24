@@ -8,8 +8,12 @@ It only responds to **private messages** sent directly to it (PM-only mode).
 
 ## Requirements
 
-- Windows with `TeamTalk5.dll` installed (e.g. at `C:\Program Files\TeamTalk5`).
-  The bot adds that directory to the DLL search path automatically.
+- Windows, Linux, or another supported platform with the TeamTalk 5 SDK native
+  library. The easiest way to get it: run the bundled downloader (below), which
+  fetches the matching SDK for your OS/architecture into
+  `_tt_vendor/TeamTalk_DLL/` — no TeamTalk install required. Alternatives: set
+  `TT_SDK_DIR` to a directory containing the library, or install the TeamTalk
+  client (Windows fallback) / SDK libs into a standard system path.
 - `ffmpeg` on PATH (for transcoding synthesized audio to a streamable WAV).
 - A running STAR coagulator (websocket) the bot can reach.
 - [uv](https://github.com/astral-sh/uv) for the Python environment.
@@ -22,10 +26,13 @@ Everything lives in **one folder** (the cloned repo). No nested `src/` maze:
 star_tt_bot/                  <- the clone (your "1 thingy")
 ├── run.py                    <- entry point (run this)
 ├── bot.py                    <- the bot logic
+├── tt_sdk.py                 <- cross-platform SDK library locator/loader
 ├── config.py                 <- defaults + env-var overrides
 ├── star_client.py            <- STAR coagulator websocket client
+├── tools/fetch_sdk.py        <- downloads + vendors the TeamTalk SDK
 ├── config.local.py.example   <- copy to config.local.py, fill in creds
-├── _tt_vendor/TeamTalkPy/    <- vendored SDK wrapper (offline)
+├── _tt_vendor/TeamTalkPy/    <- vendored SDK wrapper (committed)
+├── _tt_vendor/TeamTalk_DLL/  <- vendored native SDK lib (fetched, gitignored)
 ├── pyproject.toml / uv.lock
 ├── README.md / LICENSE / .gitignore
 ```
@@ -38,11 +45,12 @@ real credentials — never committed).
 ```bat
 cd star_tt_bot
 uv sync
-uv run python run.py --set        # interactive: enter your account details
-uv run python run.py              # run it
+uv run python tools/fetch_sdk.py   # one-time: download + vendor the TeamTalk SDK
+uv run python run.py --set         # interactive: enter your account details
+uv run python run.py               # run it
 ```
 
-`--set` writes a gitignored `src/star_tt_bot/config.local.py` so your
+`--set` writes a gitignored `config.local.py` so your
 credentials never leave your machine. Re-run with `--force` to overwrite.
 
 To run without auto-connecting to a STAR coagulator:
@@ -83,7 +91,7 @@ Switching voices resets rate/pitch to defaults (values are per-voice).
 
 **No secrets are stored in the repo.** Credentials come from environment
 variables, a gitignored `config.local.py` (made via `--set`), or both. See
-`src/star_tt_bot/config.py` for the full list of `STAR_TT_*` / `STAR_COAG_*`
+`config.py` for the full list of `STAR_TT_*` / `STAR_COAG_*`
 environment variables.
 
 Defaults (overridable via env or `config.local.py`):
@@ -103,7 +111,17 @@ Set your real password with the `STAR_TT_PASSWORD` environment variable or via
 ## TeamTalk SDK note
 
 The Python `teamtalk` package normally tries to download a paywalled SDK from
-bearware.dk on first import. This repo vendors the wrapper we already use in
-`src/star_tt_bot/_tt_vendor/TeamTalkPy` so a fresh `uv sync` works offline.
-You still need the native **TeamTalk5.dll** installed on Windows (the bot points
-at `C:\Program Files\TeamTalk5` automatically).
+bearware.dk on first import, and the SDK itself is only distributed as a 7z
+behind an anti-bot check. `tools/fetch_sdk.py` (adapted from seedy60/cider)
+solves that check, downloads the newest SDK for your platform (win64, win32,
+ubuntu22_x86_64, raspbian_arm64), and installs `TeamTalk_DLL` + `TeamTalkPy`
+into `_tt_vendor/`. The native library is resolved at runtime by `tt_sdk.py`:
+vendored first, then `$TT_SDK_DIR`, then system locations — so the same repo
+runs on Windows, Linux, or a Raspberry Pi without any TeamTalk client install.
+
+If the automated download is blocked on your network, download the SDK 7z in a
+browser and install it directly:
+
+```bat
+uv run python tools/fetch_sdk.py --archive path\to\tt5sdk_vX.YZ_win64.7z
+```

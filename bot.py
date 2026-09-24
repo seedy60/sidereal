@@ -26,21 +26,34 @@ import logging
 import subprocess
 import tempfile
 import sys
+import time
+import threading
 
-# --- Make the locally installed TeamTalk5.dll loadable on Windows ---
-_TT_DLL_DIR = r"C:\Program Files\TeamTalk5"
-if os.name == "nt" and os.path.isdir(_TT_DLL_DIR):
-    os.add_dll_directory(_TT_DLL_DIR)
-    os.environ["PATH"] = _TT_DLL_DIR + os.pathsep + os.environ.get("PATH", "")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+# --- Make the native TeamTalk SDK library loadable (cross-platform) ---
+# tt_sdk resolves, in order: the SDK pair vendored in _tt_vendor/TeamTalk_DLL
+# (installed by tools/fetch_sdk.py), $TT_SDK_DIR, then well-known system
+# installs (client app on Windows, brew/distro paths elsewhere). On Windows
+# the DLL is loaded explicitly by absolute path so the OS can't silently
+# resolve the name to a mismatched copy from PATH.
+from tt_sdk import load as _tt_sdk_load
+try:
+    _tt_lib, _tt_src = _tt_sdk_load()
+except SystemExit as _e:
+    raise SystemExit(
+        str(_e)
+        + "\n  (Or install the TeamTalk client app; but the matching SDK is\n"
+          "   preferred and required for media streaming.)"
+    )
 
 # --- Vendored TeamTalk SDK wrapper -------------------------------------
 # The upstream `teamtalk` PyPI package tries to auto-download a paywalled SDK
 # from bearware.dk on import (when its bundled wrapper is missing). We ship the
 # wrapper we already have in `_tt_vendor/TeamTalkPy` and register it in
 # sys.modules BEFORE importing `teamtalk`, so the import succeeds offline and
-# never triggers the download. (The native TeamTalk5.dll still must be installed
-# separately -- see README.)
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# never triggers the download. (The native TeamTalk5.dll is loaded explicitly
+# above -- see _VENDOR_DLL -- or falls back to the client install.)
 _VENDOR_TT = os.path.join(_HERE, "_tt_vendor", "TeamTalkPy")
 
 # Only pre-register if the upstream wrapper is NOT already present in the
@@ -89,6 +102,32 @@ NOVIDEOFORMAT = 0
 CLIENTEVENT_CMD_MYSELF_LOGGEDIN = int(sdk.ClientEvent.CLIENTEVENT_CMD_MYSELF_LOGGEDIN)
 CLIENTEVENT_CMD_USER_TEXTMSG = int(sdk.ClientEvent.CLIENTEVENT_CMD_USER_TEXTMSG)
 CLIENTEVENT_CON_LOST = int(sdk.ClientEvent.CLIENTEVENT_CON_LOST)
+CLIENTEVENT_CMD_ERROR = int(sdk.ClientEvent.CLIENTEVENT_CMD_ERROR)
+
+# Command error codes that mean the login itself was refused (TeamTalk.h).
+CMDERR_INVALID_ACCOUNT = 2002
+CMDERR_MAX_SERVER_USERS_EXCEEDED = 2003
+CMDERR_SERVER_BANNED = 2005
+CMDERR_ALREADY_LOGGEDIN = 3001
+CMDERR_LOGIN_REFUSED = frozenset({
+    CMDERR_INVALID_ACCOUNT, CMDERR_MAX_SERVER_USERS_EXCEEDED,
+    CMDERR_SERVER_BANNED, CMDERR_ALREADY_LOGGEDIN,
+})
+
+
+def _cmd_error_code_and_text(m):
+    """Extract (code, text) from a CLIENTEVENT_CMD_ERROR message.
+
+    The details live in the TTMessage union's ClientErrorMsg member
+    (nErrorNo + szErrorMsg). TTMessage has NO 'nError' field -- reading it
+    with getattr() silently yields the fallback value, which is exactly how
+    real server errors used to end up logged as "code 0 = success ACK".
+    """
+    try:
+        em = m.clienterrormsg
+        return int(em.nErrorNo), sdk.ttstr(em.szErrorMsg) or ""
+    except Exception as e:
+        return 0, "<unreadable error message: %s>" % e
 
 
 class StarTeamTalkBot:
@@ -115,9 +154,10 @@ class StarTeamTalkBot:
         self.rate = 0.0    # 0 = unset; when set, injected as [[rate N]]
         self.pitch = 0.0   # 0 = unset; when set, injected as [[pbas N]]
 
-        self._stream_lock = threading.Lock() if False else __import__("threading").Lock()
+        self._stream_lock = threading.Lock()
         self._streaming = False
         self._temp_files = []
+        self._last_from = 0   # last PM recipient (used by failed-stream replies)
         self.running = True
 
     # ---- lifecycle -------------------------------------------------------
@@ -130,6 +170,13 @@ class StarTeamTalkBot:
             err = self._safe_last_error()
             raise RuntimeError(f"TeamTalk connect() failed for {self.host}:{self.tcp_port}"
                                + (f" (server error {err})" if err else ""))
+        # TT_Connect() is ASYNCHRONOUS: a True return only means the connect
+        # command was accepted. The TCP/UDP handshake completes in the
+        # background and CLIENTEVENT_CON_SUCCESS is posted when done. Issuing
+        # doLogin before that fails with -1 (wrong client state) -- which this
+        # bot used to log as "accepted" because -1 is truthy, and then wonder
+        # why no channel list ever arrived.
+        self._wait_connected()
         log.info("TCP/UDP connection established. Logging in as nickname=%r username=%r",
                  self.nickname, self.username)
         self._login_and_sync()
@@ -142,6 +189,36 @@ class StarTeamTalkBot:
         else:
             log.warning("Could not join '%s'; staying unjoined. Commands still work via PM.",
                         self.channel_path)
+
+    def _wait_connected(self, timeout=10):
+        """Block until the TT_Connect() handshake completes.
+
+        Waits for the CLIENT_CONNECTED flag (and consumes the CON_SUCCESS
+        event on the way). Raises on CON_FAILED / crypt errors / timeout.
+        doLogin is only legal once this returns.
+        """
+        con_success = int(sdk.ClientEvent.CLIENTEVENT_CON_SUCCESS)
+        con_failed = int(sdk.ClientEvent.CLIENTEVENT_CON_FAILED)
+        con_crypt = int(sdk.ClientEvent.CLIENTEVENT_CON_CRYPT_ERROR)
+        end = time.time() + timeout
+        while time.time() < end:
+            flags = int(self.tt.getFlags())
+            if flags & 0x00004000:  # CLIENT_CONNECTED
+                return True
+            m = self.tt.getMessage(100)
+            if m:
+                ev = int(m.nClientEvent)
+                if ev == con_failed:
+                    raise RuntimeError("TeamTalk connection failed "
+                                       "(CLIENTEVENT_CON_FAILED -- server unreachable/refused?).")
+                if ev == con_crypt:
+                    raise RuntimeError("TeamTalk encryption error during connect "
+                                       "(encrypted=False but server requires TLS?).")
+                if ev == con_success:
+                    return True
+        raise RuntimeError(
+            f"Timed out after {timeout}s waiting for TeamTalk TCP/UDP handshake "
+            f"(flags=0x{int(self.tt.getFlags()):08x}).")
 
     def _safe_last_error(self):
         """Best-effort fetch of the SDK's last error string, for diagnostics."""
@@ -166,7 +243,6 @@ class StarTeamTalkBot:
         (bad account, not authorized, banned, etc.) is reported immediately
         with the server's actual error code instead of a generic timeout.
         """
-        import time
         self._channel_tree = {}
         deadline = time.time() + timeout
         logged_in = False
@@ -183,28 +259,35 @@ class StarTeamTalkBot:
 
         while time.time() < deadline:
             do_login_calls += 1
-            if not self.tt.doLogin(self.nickname, self.username, self.password, self.client_name):
+            login_rc = self.tt.doLogin(self.nickname, self.username, self.password, self.client_name)
+            if login_rc != 1:
+                # TT_DoLoginEx returns 1 on success, -1 on error. NEVER treat
+                # a nonzero return as success (-1 used to pass the old
+                # truthiness check and the bot logged in... to nowhere).
                 do_login_rejected += 1
-                log.warning("doLogin() returned False (attempt %d)", do_login_calls)
-                # doLogin returned False -> find out why from the server
-                err = self._wait_login_error(3)
-                if err is not None:
-                    code, msg = err
-                    last_error = (code, msg)
-                    if code == 3001:  # CMDERR_ALREADY_LOGGEDIN
-                        log.warning("Account already logged in elsewhere (code 3001); retrying in 5s...")
-                        _note(3001, msg)
-                        time.sleep(5)
-                        continue
-                    log.error("Login REJECTED by server: code %s (%s). Check username/password/account.",
-                              code, msg)
-                    raise RuntimeError(
-                        f"Login rejected by server (code {code}: {msg}). "
-                        f"Check username/password and server account status.")
-                # no explicit error event; treat as transient and retry
-                _note(-1, "doLogin False, no error event")
-                log.warning("doLogin False but no server error event within 3s; retrying...")
-                time.sleep(3)
+                log.warning("doLogin() returned %s (attempt %d) -- login command not accepted.",
+                            login_rc, do_login_calls)
+                if int(self.tt.getFlags()) & 0x00004000:
+                    err = self._wait_login_error(3)
+                    if err is not None:
+                        code, msg = err
+                        last_error = (code, msg)
+                        if code == 3001:  # CMDERR_ALREADY_LOGGEDIN
+                            log.warning("Account already logged in elsewhere (code 3001); retrying in 5s...")
+                            _note(3001, msg)
+                            time.sleep(5)
+                            continue
+                        log.error("Login REJECTED by server: code %s (%s). Check username/password/account.",
+                                  code, msg)
+                        raise RuntimeError(
+                            f"Login rejected by server (code {code}: {msg}). "
+                            f"Check username/password and server account status.")
+                # doLogin failed locally (wrong state?) or no server error yet:
+                # make sure we're connected, then retry.
+                _note(-1, f"doLogin rc={login_rc}")
+                if not (int(self.tt.getFlags()) & 0x00004000):
+                    self._wait_connected()
+                time.sleep(2)
                 continue
             log.info("doLogin() accepted (attempt %d); confirming login + gathering channel tree...", do_login_calls)
             _note(0, "doLogin accepted")
@@ -223,6 +306,15 @@ class StarTeamTalkBot:
                             log.info("Set bot status message.")
                         except Exception as e:
                             log.warning("Could not set status message: %s", e)
+                    # The server sends the whole channel tree as a burst of
+                    # CHANNEL_NEW events AFTER the login ack. Do not break
+                    # here -- keep draining for a settle window so the events
+                    # are actually consumed into self._channel_tree before we
+                    # try to join a channel. (Breaking immediately made the
+                    # tree always empty and the join always fail.)
+                    if self._drain_channel_tree():
+                        _note(998, "channel tree settled")
+                        return
                     break
                 m = self.tt.getMessage(200)
                 if not m:
@@ -247,19 +339,22 @@ class StarTeamTalkBot:
                     con_lost = True
                     _note(ev, "CON_LOST")
                     raise RuntimeError("Connection lost during login")
-                elif ev == int(sdk.ClientEvent.CLIENTEVENT_CMD_ERROR):
-                    code = getattr(m, "nError", 0)
-                    # TeamTalk error code 0 == CMDERR_SUCCESS == no error.
-                    # The server routinely sends this as a routine ACK during
-                    # login; only non-zero codes are real failures.
-                    if code != 0:
-                        msg = sdk.getErrorMessage(code) if hasattr(sdk, "getErrorMessage") else ""
-                        last_error = (code, msg)
-                        _note(ev, f"code {code}: {msg}")
-                        log.error("Server error during login: code %s (%s)", code, msg)
-                    else:
+                elif ev == CLIENTEVENT_CMD_ERROR:
+                    code, etext = _cmd_error_code_and_text(m)
+                    if code == 0:
                         _note(ev, "code 0 (success ACK)")
                         log.debug("Server login ACK (code 0 = success).")
+                        continue
+                    last_error = (code, etext)
+                    _note(ev, f"code {code}: {etext}")
+                    if code in CMDERR_LOGIN_REFUSED:
+                        hint = ("another session is already using this account "
+                                "(log it out and retry)" if code == CMDERR_ALREADY_LOGGEDIN
+                                else "check credentials in config.local.py")
+                        raise RuntimeError(
+                            "Login refused by server (code %s: %s) -- %s"
+                            % (code, etext, hint))
+                    log.error("Server error during login: code %s (%s)", code, etext)
                 if logged_in and (self.tt.getRootChannelID() > 0 or len(self._channel_tree) >= 1):
                     grace_end = time.time() + 1.5
                     while time.time() < grace_end:
@@ -318,47 +413,157 @@ class StarTeamTalkBot:
                 continue
             if m.nClientEvent == CLIENTEVENT_CON_LOST:
                 raise RuntimeError("Connection lost during login")
-            if m.nClientEvent == int(sdk.ClientEvent.CLIENTEVENT_CMD_ERROR):
-                code = getattr(m, "nError", 0)
+            if m.nClientEvent == CLIENTEVENT_CMD_ERROR:
+                code, etext = _cmd_error_code_and_text(m)
                 if code == 0:
                     # success ACK, not an error -- ignore and keep pumping
                     continue
-                msg = ""
-                try:
-                    msg = sdk.getErrorMessage(code)
-                except Exception:
-                    pass
-                return (code, msg)
+                return (code, etext)
         return None
 
-    def _join_channel(self):
+    def _drain_channel_tree(self, max_s=5.0, quiet_s=0.6):
+        """After login, pump events until the CHANNEL_NEW burst settles.
+
+        The server sends the full channel tree as a burst of CMD_CHANNEL_NEW
+        events right after login. We keep pumping until no new channel event
+        has arrived for `quiet_s` seconds (or `max_s` total), so the tree is
+        populated before anything tries to use it. Returns True if at least
+        one channel was seen (or a root channel id exists), False otherwise.
+        """
+        ch_event = int(sdk.ClientEvent.CLIENTEVENT_CMD_CHANNEL_NEW)
+        start = time.time()
+        last_new = time.time()
+        saw_any = False
+        while time.time() - start < max_s and time.time() - last_new < quiet_s:
+            m = self.tt.getMessage(100)
+            if not m:
+                continue
+            if m.nClientEvent == CLIENTEVENT_CON_LOST:
+                raise RuntimeError("Connection lost during login")
+            if m.nClientEvent == ch_event and m.channel:
+                ch = m.channel
+                self._channel_tree[ch.nChannelID] = (sdk.ttstr(ch.szName), ch.nParentID)
+                last_new = time.time()
+                saw_any = True
+            elif m.nClientEvent == CLIENTEVENT_CMD_ERROR:
+                code, etext = _cmd_error_code_and_text(m)
+                if code != 0:
+                    log.warning("Server error during channel-tree drain: code %s (%s)", code, etext)
+        if self.tt.getRootChannelID() > 0:
+            saw_any = True
+        return saw_any
+
+    def _join_channel(self, timeout=10):
+        """Resolve the configured channel and join it.
+
+        Resolution is deliberately event-independent: the login-time channel
+        burst can be missed or arrive out of order, so instead of trusting the
+        harvested tree we ask the client for the live channel list.
+        """
         chan_id = self.tt.getChannelIDFromPath(self.channel_path)
         if chan_id <= 0:
-            chan_id = self.tt.getRootChannelID()
+            chan_id = self._find_channel_id_by_path()
         if chan_id <= 0:
-            log.warning("Channel '%s' not found and no root channel visible.",
-                        self.channel_path)
-            return
+            # Last resort: keep pumping events briefly in case the tree is
+            # still arriving, then try the direct path lookup once more.
+            self._drain_channel_tree(max_s=2.0, quiet_s=0.5)
+            chan_id = self.tt.getChannelIDFromPath(self.channel_path)
+            if chan_id <= 0:
+                chan_id = self._find_channel_id_by_path()
+        if chan_id <= 0:
+            root = self.tt.getRootChannelID()
+            if root > 0:
+                log.warning("Channel '%s' not found on server; joining root channel instead.",
+                            self.channel_path)
+                chan_id = root
+            else:
+                log.warning("Channel '%s' not found and no root channel visible.",
+                            self.channel_path)
+                return
         log.info("Joining channel id=%d ('%s')", chan_id, self.channel_path)
         self.tt.doJoinChannelByID(chan_id, self.channel_password)
-        # wait until we are actually in a channel (best-effort)
-        for _ in range(60):
+        end = time.time() + timeout
+        while time.time() < end:
             if self.tt.getMyChannelID() == chan_id:
                 return
             self.tt.getMessage(100)
+        log.warning("Join for channel id=%d did not confirm within %ss (getMyChannelID=%d).",
+                    chan_id, timeout, self.tt.getMyChannelID())
+
+    def _find_channel_id_by_path(self):
+        """Find a channel id by walking the server's live channel list.
+
+        getChannelIDFromPath() only knows complete, exact paths and can fail
+        if the client's internal path index isn't populated. Walking the
+        server's channel list and matching parent-by-parent is more robust.
+        Accepts both '/a/b' and 'a/b' style paths; an empty or '/'-only path
+        resolves to the root channel.
+        """
+        try:
+            channels = self.tt.getServerChannels()
+        except Exception as e:
+            log.warning("getServerChannels() failed: %s", e)
+            return 0
+        if not channels:
+            return 0
+        # index by id -> (name, parent)
+        by_id = {}
+        for ch in channels:
+            by_id[int(ch.nChannelID)] = (sdk.ttstr(ch.szName), int(ch.nParentID))
+
+        root_id = self.tt.getRootChannelID()
+        parts = [p for p in (self.channel_path or "").split("/") if p.strip()]
+        if not parts:
+            return root_id if root_id > 0 else 0
+
+        # start from the root (or, failing that, the parentless channel(s))
+        current = root_id if root_id > 0 else 0
+        if current <= 0:
+            # fall back to any channel whose parent is 0 (top of the tree)
+            tops = [cid for cid, (_n, par) in by_id.items() if par == 0]
+            if len(tops) == 1:
+                current = tops[0]
+            else:
+                return 0
+        for part in parts:
+            match = None
+            for cid, (name, parent) in by_id.items():
+                if parent == current and name.strip().lower() == part.strip().lower():
+                    match = cid
+                    break
+            if match is None:
+                return 0
+            current = match
+        return current
 
     def run(self):
         log.info("Event loop started. Listening for commands (PM-only)...")
+        next_join_retry = time.time() + 15
         while self.running:
             msg = self.tt.getMessage(500)
-            if not msg:
-                continue
-            ev = msg.nClientEvent
+            ev = int(msg.nClientEvent) if msg else 0
             if ev == CLIENTEVENT_CMD_USER_TEXTMSG:
                 self._on_text_message(msg.textmessage)
             elif ev == CLIENTEVENT_CON_LOST:
                 log.warning("Connection to server lost.")
                 self.running = False
+            elif ev == int(sdk.ClientEvent.CLIENTEVENT_CMD_CHANNEL_NEW) and msg.channel:
+                ch = msg.channel
+                self._channel_tree[ch.nChannelID] = (sdk.ttstr(ch.szName), ch.nParentID)
+            # Deferred join: if the initial join failed (e.g. the channel list
+            # hadn't arrived yet), keep re-attempting every 30s instead of
+            # staying unjoined until manual restart.
+            if not self.running:
+                break
+            if self.tt.getMyChannelID() <= 0 and time.time() >= next_join_retry:
+                next_join_retry = time.time() + 30
+                log.info("Not in any channel; re-attempting join of '%s'...", self.channel_path)
+                try:
+                    self._join_channel(timeout=5)
+                except Exception as e:
+                    log.warning("Deferred join attempt failed: %s", e)
+                if self.tt.getMyChannelID() > 0:
+                    log.info("Joined channel id=%d (deferred). Bot is live.", self.tt.getMyChannelID())
 
     def disconnect(self):
         self.running = False

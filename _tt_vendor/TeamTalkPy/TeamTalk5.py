@@ -28,8 +28,14 @@ from ctypes import cdll, c_int, c_char, c_wchar, c_wchar_p, c_char_p, \
 if sys.platform == "win32":
     if (sys.version_info.major == 3 and sys.version_info.minor >= 8):
         os.add_dll_directory(os.getcwd())
-        # Path relative to TeamTalk SDK's DLL location
-        os.add_dll_directory(os.path.dirname(os.path.abspath(__file__)) + "\\..\\TeamTalk_DLL")
+        # Path relative to TeamTalk SDK's DLL location. Only added when it
+        # actually exists -- add_dll_directory() raises FileNotFoundError
+        # otherwise (e.g. when this wrapper is vendored outside an SDK tree;
+        # the app registers the real dll dir itself before importing).
+        _sdk_dll_dir = os.path.abspath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "TeamTalk_DLL"))
+        if os.path.isdir(_sdk_dll_dir):
+            os.add_dll_directory(_sdk_dll_dir)
     dll = cdll.TeamTalk5
     TTCHAR = c_wchar
     TTCHAR_P = c_wchar_p
